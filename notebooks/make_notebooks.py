@@ -117,6 +117,11 @@ print('Detectra:', DETECTRA)
 print('VisDrone:', VISDRONE)
 !find {DETECTRA} -maxdepth 3 -type d | head -20"""),
     ("code", """\
+# Free disk first: /kaggle/working is only 19.5 GB and stale copies from
+# earlier runs fill it. Images are SYMLINKED (not copied) into the merge,
+# so the combined dataset itself costs ~100 MB of labels only.
+!rm -rf /kaggle/working/datasets
+!df -h /kaggle/working | tail -1
 # Merges both datasets (remapping VisDrone class indices into the merged
 # class list) and GENERATES the training YAML with correct nc/names.
 # Aborts with a clear error if 0 images are found.

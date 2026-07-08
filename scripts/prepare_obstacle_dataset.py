@@ -172,9 +172,23 @@ def ingest(root: Path, prefix: str, out: Path, index_map: dict[int, int] | None,
                 eff_split = "val"
             img_dest = out / "images" / eff_split / f"{prefix}_{img.name}"
             lbl_dest = out / "labels" / eff_split / f"{prefix}_{img.stem}.txt"
-            shutil.copy(img, img_dest)
+            # Symlink images instead of copying: /kaggle/working is only
+            # ~19.5 GB and the source datasets already live (read-only) on
+            # disk. Ultralytics follows symlinks. Fall back to copy on
+            # filesystems without symlink support.
+            try:
+                if img_dest.exists() or img_dest.is_symlink():
+                    img_dest.unlink()
+                img_dest.symlink_to(img.resolve())
+            except OSError:
+                shutil.copy(img, img_dest)
             if index_map is None:
-                shutil.copy(lbl, lbl_dest)
+                try:
+                    if lbl_dest.exists() or lbl_dest.is_symlink():
+                        lbl_dest.unlink()
+                    lbl_dest.symlink_to(lbl.resolve())
+                except OSError:
+                    shutil.copy(lbl, lbl_dest)
             else:
                 remap_label(lbl, lbl_dest, img, index_map)
             counts[eff_split] += 1
@@ -192,6 +206,11 @@ def main():
     args = parser.parse_args()
 
     out = Path(args.out)
+    # Wipe any previous (possibly partial) merge — stale copied images from
+    # earlier runs are the main way /kaggle/working fills up.
+    if out.exists():
+        shutil.rmtree(out)
+        print(f"Removed stale output dir {out}")
     for sub in ("images/train", "images/val", "labels/train", "labels/val"):
         (out / sub).mkdir(parents=True, exist_ok=True)
 
