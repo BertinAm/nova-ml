@@ -88,7 +88,8 @@ nova-ml/
 │   └── make_notebooks.py             # source of truth — edit this, regenerate
 ├── scripts/
 │   ├── nova_common.py                # HF repos (unixio/*), token resolution, Kaggle paths
-│   ├── prepare_obstacle_dataset.py   # Detectra + VisDrone -> unified YOLO format
+│   ├── prepare_obstacle_dataset.py   # auto-discovers layouts, remaps VisDrone class
+│   │                                 #   indices, GENERATES the training YAML
 │   ├── train_obstacle.py             # MOD-01: YOLOv8n train + native TFLite INT8 export
 │   ├── train_currency_distillation.py# MOD-04: 2-phase teacher finetune + KD
 │   ├── train_face_embedding.py       # MOD-05: MobileFaceNet + ArcFace + embedding KD
@@ -96,7 +97,6 @@ nova-ml/
 │   ├── convert_to_tflite.py          # PyTorch -> ONNX -> onnx2tf -> TFLite INT8 + benchmark
 │   ├── push_to_huggingface.py        # publish artefacts + config.json + checksum
 │   └── register_model_in_backend.py  # upload .tflite to nova-backend /models/register
-├── configs/obstacle_data.yaml        # merged dataset config (fill class list after prepare)
 ├── labels/cfa_labels.txt
 └── requirements.txt                  # for local runs; Kaggle preinstalls most of it
 ```

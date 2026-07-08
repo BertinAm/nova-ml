@@ -95,32 +95,31 @@ obstacle = nb([
 !ls /kaggle/input/
 !find /kaggle/input/dectectra-dataset -maxdepth 2 -type d | head -20"""),
     ("code", """\
+# Merges both datasets (remapping VisDrone class indices into the merged
+# class list) and GENERATES the training YAML with correct nc/names.
+# Aborts with a clear error if 0 images are found.
 !python scripts/prepare_obstacle_dataset.py \\
     --detectra /kaggle/input/dectectra-dataset \\
     --visdrone /kaggle/input/visdrone-dataset \\
-    --out /kaggle/working/datasets/obstacle_combined"""),
+    --out /kaggle/working/datasets/obstacle_combined \\
+    --yaml-out /kaggle/working/obstacle_data.yaml
+!head -40 /kaggle/working/obstacle_data.yaml"""),
     ("code", """\
-# Point the data config at the merged dataset.
-# NOTE: verify/fix the class list in configs/obstacle_data.yaml against
-# the Detectra data.yaml before a full run (see the config's comments).
-import yaml
-cfg = yaml.safe_load(open('configs/obstacle_data.yaml'))
-cfg['path'] = '/kaggle/working/datasets/obstacle_combined'
-yaml.dump(cfg, open('configs/obstacle_data.yaml', 'w'))
-print(cfg['path'], '| nc =', cfg['nc'])"""),
-    ("code", """\
-# Full training + TFLite INT8 export (Ultralytics native export)
-!python scripts/train_obstacle.py --data configs/obstacle_data.yaml \\
+# Full training + TFLite INT8 export (Ultralytics native export).
+# STOP if the previous cell errored — do not burn GPU hours on 0 images.
+!python scripts/train_obstacle.py --data /kaggle/working/obstacle_data.yaml \\
     --epochs 100 --imgsz 320 --batch 32"""),
     ("code", """\
 # Publish to HuggingFace: unixio/nova-obstacle-detection
 import glob
-tflite = glob.glob('/kaggle/working/runs/obstacle_student/weights/*_int8.tflite') + \\
-         glob.glob('/kaggle/working/runs/obstacle_student/weights/best_saved_model/*_int8.tflite')
-print('TFLite candidates:', tflite)
+candidates = glob.glob('/kaggle/working/runs/obstacle_student/weights/**/*_int8.tflite',
+                       recursive=True)
+print('TFLite candidates:', candidates)
+assert candidates, 'No INT8 TFLite found — training/export must succeed first.'
+tflite_path = candidates[0]
 best_pt = '/kaggle/working/runs/obstacle_student/weights/best.pt'
 !python scripts/push_to_huggingface.py --module MOD-01 \\
-    --pytorch {best_pt} --tflite {tflite[0]} \\
+    --pytorch {best_pt} --tflite {tflite_path} \\
     --eval-json /kaggle/working/evaluation/obstacle_results.json --version 1.0.0"""),
 ])
 

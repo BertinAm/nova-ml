@@ -14,9 +14,11 @@ strategy used here (and widely in practice) is:
 Smoke test first (2 min, verifies the whole pipeline):
     python scripts/train_obstacle.py --data coco128.yaml --epochs 1
 
-Full run:
-    python scripts/prepare_obstacle_dataset.py
-    python scripts/train_obstacle.py --data configs/obstacle_data.yaml --epochs 100
+Full run (prepare_obstacle_dataset.py GENERATES the data YAML — correct
+nc/names — so there is no manual config editing step):
+    python scripts/prepare_obstacle_dataset.py --detectra ... --visdrone ... \
+        --yaml-out /kaggle/working/obstacle_data.yaml
+    python scripts/train_obstacle.py --data /kaggle/working/obstacle_data.yaml --epochs 100
 """
 import argparse
 import json
@@ -37,7 +39,8 @@ def pseudo_label(teacher_weights: str, images_dir: str, labels_out: str, conf: f
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", default="configs/obstacle_data.yaml")
+    parser.add_argument("--data", required=True,
+                        help="Generated YAML from prepare_obstacle_dataset.py, or coco128.yaml for smoke test")
     parser.add_argument("--model", default="yolov8n.pt")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--imgsz", type=int, default=320)
