@@ -167,24 +167,26 @@ CFA_DATA = '/kaggle/input/cfa-currency-dataset'   # <-- your dataset slug
 face = nb([
     ("md", "# NOVA 03 — MOD-05 Face Embedding (MobileFaceNet)\n"
            "**Attach datasets:**\n"
-           "- a VGGFace2 subset (e.g. `hearthewind/vggface2-dataset` — attach and "
-           "point --data-dir at a ~20% identity subset)\n"
+           "- `yakhyokhuja/vggface2-112x112` — VGGFace2 pre-aligned to 112x112 "
+           "(exactly MobileFaceNet's input size; no alignment preprocessing needed)\n"
            "- `jessicali9530/lfw-dataset` (evaluation only)\n\n"
-           "**Accelerator:** GPU. Training on the subset ~6-10h.\n"
+           "**Accelerator:** GPU. Training on a subset of identities ~6-10h.\n"
            "Teacher (InsightFace ArcFace) downloads its weights on first run — "
            "internet must be ON in notebook settings."),
     ("code", BOOTSTRAP),
     ("code", "!pip install -q insightface onnxruntime-gpu onnx2tf onnx"),
     ("code", """\
-# EDIT: point at the identity-folder root inside the attached dataset
-VGG_DATA = '/kaggle/input/vggface2-dataset/train'   # one folder per identity
-!ls {VGG_DATA} | head -5
+# Locate the identity-folder root inside the attached dataset
+# (layout may nest one level — adjust after inspecting)
+!find /kaggle/input/vggface2-112x112 -maxdepth 2 -type d | head -10
+VGG_DATA = '/kaggle/input/vggface2-112x112/train'   # one folder per identity
 !ls {VGG_DATA} | wc -l"""),
     ("code", """\
 # MobileFaceNet + ArcFace loss + embedding-KD from InsightFace teacher.
+# --max-identities 2000 keeps one run inside Kaggle's 12h session limit.
 # Use --no-teacher to skip distillation if insightface weights fail to load.
 !python scripts/train_face_embedding.py --data-dir {VGG_DATA} \\
-    --epochs 50 --batch-size 128"""),
+    --epochs 50 --batch-size 128 --max-identities 2000"""),
     ("code", """\
 # Convert to TFLite INT8 (calibrate on a slice of training identities)
 !python scripts/convert_to_tflite.py \\

@@ -129,6 +129,9 @@ def main():
     parser.add_argument("--kd-alpha", type=float, default=0.6)
     parser.add_argument("--no-teacher", action="store_true",
                         help="Skip distillation, train with ArcFace loss only")
+    parser.add_argument("--max-identities", type=int, default=2000,
+                        help="Subsample to this many identities so training fits a "
+                             "12h Kaggle session (0 = use all)")
     args = parser.parse_args()
 
     dirs = ensure_dirs()
@@ -140,6 +143,19 @@ def main():
         transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
     ])
     ds = datasets.ImageFolder(args.data_dir, transform=tfm)
+    if args.max_identities and len(ds.classes) > args.max_identities:
+        import random
+
+        rng = random.Random(42)
+        kept_classes = set(rng.sample(range(len(ds.classes)), args.max_identities))
+        # Remap kept class indices to a dense 0..N-1 range for ArcFace.
+        remap = {old: new for new, old in enumerate(sorted(kept_classes))}
+        indices = [i for i, (_, c) in enumerate(ds.samples) if c in kept_classes]
+        ds.samples = [(p, remap[c]) for p, c in (ds.samples[i] for i in indices)]
+        ds.targets = [c for _, c in ds.samples]
+        ds.classes = [ds.classes[i] for i in sorted(kept_classes)]
+        ds.imgs = ds.samples
+        print(f"Subsampled to {args.max_identities} identities, {len(ds.samples)} images")
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True, num_workers=2, drop_last=True)
     num_identities = len(ds.classes)
     print(f"Identities: {num_identities}, images: {len(ds)}")

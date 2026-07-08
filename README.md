@@ -50,7 +50,7 @@ the datasets listed in its first cell.
 | `00_setup_check.ipynb` | nothing (verification) | — | ~5 min |
 | `01_obstacle_detection.ipynb` | MOD-01 YOLOv8n | `jhontroya/dectectra-dataset`, `kushagrapandya/visdrone-dataset` | 6–9 h |
 | `02_currency_detection.ipynb` | MOD-04 MobileNetV3-S | **your private CFA dataset** (see below) | 2–4 h |
-| `03_face_embedding.ipynb` | MOD-05 MobileFaceNet | `hearthewind/vggface2-dataset` (subset), `jessicali9530/lfw-dataset` | 6–10 h |
+| `03_face_embedding.ipynb` | MOD-05 MobileFaceNet | `yakhyokhuja/vggface2-112x112` (pre-aligned), `jessicali9530/lfw-dataset` | 6–10 h |
 
 Each notebook ends by pushing the checkpoint + TFLite INT8 file + config.json
 (with SHA-256 checksum) to the matching `unixio/nova-*` HF repo.
@@ -131,6 +131,17 @@ export NOVA_OPERATOR_PASSWORD=...
 python scripts/register_model_in_backend.py --module MOD-04 --version 1.0.0 \
     --tflite exports/currency_detection_v1.tflite --notes "distilled MobileNetV3-S"
 ```
+
+## Dataset Availability (verified July 2026)
+
+| Dataset | Kaggle slug | Status |
+| --- | --- | --- |
+| Detectra | `jhontroya/dectectra-dataset` | ✅ available |
+| VisDrone 2019 | `kushagrapandya/visdrone-dataset` | ✅ available (or Ultralytics auto-download) |
+| COCO128 (smoke test) | auto-downloaded by Ultralytics | ✅ |
+| VGGFace2 | ~~`hearthewind/vggface2-dataset`~~ **404 — replaced** by `yakhyokhuja/vggface2-112x112` (pre-aligned 112x112, ideal for MobileFaceNet) | ✅ available |
+| LFW (eval) | `jessicali9530/lfw-dataset` | ✅ available |
+| CFA franc notes | — | ❌ must be team-collected (no public dataset) |
 
 ## Deviations From the Training Guide (v1.1)
 
