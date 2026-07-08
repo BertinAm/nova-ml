@@ -65,28 +65,79 @@ def find_image_dirs(root: Path) -> list[tuple[Path, str]]:
     return results
 
 
-def label_file_for(img: Path) -> Path | None:
-    """Find the YOLO .txt label for an image, trying common conventions."""
-    candidates = [
-        img.with_suffix(".txt"),  # labels beside images
-        Path(str(img.parent).replace("images", "labels")) / (img.stem + ".txt"),
-        Path(str(img.parent).replace("Images", "labels")) / (img.stem + ".txt"),
-    ]
-    for c in candidates:
-        if c != img and c.exists():
-            return c
-    return None
+def build_label_index(root: Path) -> dict[str, list[Path]]:
+    """Index every .txt file under root by filename stem. This is layout-proof:
+    it works whether the label folder is called labels, labes (Detectra ships
+    with that typo), annotations, or anything else."""
+    index: dict[str, list[Path]] = {}
+    for txt in root.rglob("*.txt"):
+        index.setdefault(txt.stem, []).append(txt)
+    return index
 
 
-def remap_label(src: Path, dest: Path, index_map: dict[int, int]) -> None:
+def label_file_for(img: Path, label_index: dict[str, list[Path]]) -> Path | None:
+    candidates = label_index.get(img.stem)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    # Same stem in several splits — pick the one sharing the most path parts
+    # with the image (so train images match train labels).
+    img_parts = set(img.parts)
+    return max(candidates, key=lambda c: len(set(c.parts) & img_parts))
+
+
+def convert_visdrone_raw(src: Path, dest: Path, img: Path,
+                         index_map: dict[int, int]) -> bool:
+    """Convert a raw VisDrone annotation file (comma-separated absolute
+    pixels: left,top,w,h,score,category,truncation,occlusion — categories
+    1-10) into YOLO format. Returns False if the image can't be read."""
+    from PIL import Image
+
+    try:
+        with Image.open(img) as im:
+            iw, ih = im.size
+    except Exception:
+        return False
+
     out_lines = []
     for line in src.read_text().splitlines():
+        parts = line.strip().rstrip(",").split(",")
+        if len(parts) < 6:
+            continue
+        try:
+            left, top, w, h = (float(parts[i]) for i in range(4))
+            score, category = int(parts[4]), int(parts[5])
+        except ValueError:
+            continue
+        # score==0 marks ignored regions; categories 1-10 are real objects
+        if score == 0 or not (1 <= category <= 10):
+            continue
+        cls = index_map.get(category - 1)
+        if cls is None or w <= 0 or h <= 0:
+            continue
+        cx, cy = (left + w / 2) / iw, (top + h / 2) / ih
+        out_lines.append(f"{cls} {cx:.6f} {cy:.6f} {w / iw:.6f} {h / ih:.6f}")
+    dest.write_text("\n".join(out_lines) + ("\n" if out_lines else ""))
+    return True
+
+
+def remap_label(src: Path, dest: Path, img: Path, index_map: dict[int, int]) -> None:
+    """Copy a label file, remapping class indices. Detects raw VisDrone
+    format (comma-separated) and converts it to YOLO on the fly."""
+    text = src.read_text()
+    first = text.lstrip().splitlines()[0] if text.strip() else ""
+    if "," in first:
+        convert_visdrone_raw(src, dest, img, index_map)
+        return
+    out_lines = []
+    for line in text.splitlines():
         parts = line.split()
         if not parts:
             continue
         cls = int(float(parts[0]))
         if cls not in index_map:
-            continue  # class not in mapping (e.g. VisDrone 'ignored regions')
+            continue
         out_lines.append(" ".join([str(index_map[cls])] + parts[1:]))
     dest.write_text("\n".join(out_lines) + ("\n" if out_lines else ""))
 
@@ -101,8 +152,10 @@ def ingest(root: Path, prefix: str, out: Path, index_map: dict[int, int] | None,
         print(f"WARNING: no images found anywhere under {root}")
         return counts
 
+    label_index = build_label_index(root)
     has_val = any(split == "val" for _, split in image_dirs)
     rng = random.Random(42)
+    skipped_unlabelled = 0
 
     for d, split in image_dirs:
         if split == "test":
@@ -110,8 +163,9 @@ def ingest(root: Path, prefix: str, out: Path, index_map: dict[int, int] | None,
         for img in sorted(d.iterdir()):
             if img.suffix.lower() not in IMG_EXTS:
                 continue
-            lbl = label_file_for(img)
+            lbl = label_file_for(img, label_index)
             if lbl is None:
+                skipped_unlabelled += 1
                 continue  # unlabelled image is useless for detection training
             eff_split = split
             if not has_val and split == "train" and rng.random() < val_fraction:
@@ -122,8 +176,10 @@ def ingest(root: Path, prefix: str, out: Path, index_map: dict[int, int] | None,
             if index_map is None:
                 shutil.copy(lbl, lbl_dest)
             else:
-                remap_label(lbl, lbl_dest, index_map)
+                remap_label(lbl, lbl_dest, img, index_map)
             counts[eff_split] += 1
+    if skipped_unlabelled:
+        print(f"  ({prefix}: skipped {skipped_unlabelled} images with no matching label file)")
     return counts
 
 
