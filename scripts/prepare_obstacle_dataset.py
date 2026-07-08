@@ -143,10 +143,28 @@ def main():
     detectra_root = Path(args.detectra)
     names = find_class_names(detectra_root)
     if names is None:
-        raise SystemExit(
-            f"Could not find a data.yaml with class names under {detectra_root}. "
-            "Run `find <dir> -name '*.yaml'` and inspect the dataset layout."
-        )
+        # Fallback: derive the class count from the label files themselves.
+        # Names become class_0..class_N — functional for training, but the
+        # mobile app needs real names for TTS, so replace them before
+        # publishing (edit the generated YAML's `names`).
+        max_idx = -1
+        for lbl in detectra_root.rglob("*.txt"):
+            for line in lbl.read_text().splitlines():
+                parts = line.split()
+                if parts:
+                    try:
+                        max_idx = max(max_idx, int(float(parts[0])))
+                    except ValueError:
+                        break  # not a YOLO label file (e.g. readme.txt)
+        if max_idx < 0:
+            raise SystemExit(
+                f"No data.yaml with class names AND no YOLO label files found "
+                f"under {detectra_root} — inspect the dataset layout."
+            )
+        names = [f"class_{i}" for i in range(max_idx + 1)]
+        print(f"WARNING: no data.yaml found — generated {len(names)} placeholder "
+              "class names from label indices. Replace them with real names "
+              "in the generated YAML before publishing (TTS speaks these!).")
     c1 = ingest(detectra_root, "detectra", out, index_map=None)
     print(f"Detectra: {c1}")
 

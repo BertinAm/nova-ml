@@ -16,12 +16,27 @@ import os, sys, subprocess
 REPO = 'https://github.com/BertinAm/nova-ml.git'
 if not os.path.exists('/kaggle/working/nova-ml'):
     subprocess.run(['git', 'clone', REPO, '/kaggle/working/nova-ml'], check=True)
+else:  # already cloned in this session — pull latest fixes
+    subprocess.run(['git', '-C', '/kaggle/working/nova-ml', 'pull'], check=True)
 os.chdir('/kaggle/working/nova-ml')
 sys.path.insert(0, '/kaggle/working/nova-ml/scripts')
 
 from kaggle_secrets import UserSecretsClient
 os.environ['HF_TOKEN'] = UserSecretsClient().get_secret('HF_TOKEN')
 os.environ['NOVA_HF_USERNAME'] = 'unixio'
+
+# GPU compatibility guard: Kaggle's PyTorch 2.10 image dropped sm_60 (P100).
+# If you get a P100, switch Settings > Accelerator to 'GPU T4 x2'.
+import torch
+if torch.cuda.is_available():
+    cap = torch.cuda.get_device_capability(0)
+    name = torch.cuda.get_device_name(0)
+    assert cap >= (7, 0), (
+        f'{name} (sm_{cap[0]}{cap[1]}) is NOT supported by this PyTorch build. '
+        'Switch Settings > Accelerator to GPU T4 x2 and restart.')
+    print(f'GPU OK: {name}')
+else:
+    raise RuntimeError('No GPU — set Settings > Accelerator to GPU T4 x2.')
 print('Bootstrap OK — repo cloned, HF token loaded.')"""
 
 
@@ -91,16 +106,23 @@ obstacle = nb([
     ("code", BOOTSTRAP),
     ("code", "!pip install -q ultralytics onnx2tf onnx"),
     ("code", """\
-# Inspect what the attached datasets actually look like (layouts vary)
-!ls /kaggle/input/
-!find /kaggle/input/dectectra-dataset -maxdepth 2 -type d | head -20"""),
+# Resolve the ACTUAL mount paths — Kaggle mount names don't always match
+# the dataset slug, so never hardcode them.
+import glob
+inputs = glob.glob('/kaggle/input/*')
+print('Mounted inputs:', inputs)
+DETECTRA = next(p for p in inputs if 'dect' in p.lower())
+VISDRONE = next((p for p in inputs if 'visdrone' in p.lower()), None)
+print('Detectra:', DETECTRA)
+print('VisDrone:', VISDRONE)
+!find {DETECTRA} -maxdepth 3 -type d | head -20"""),
     ("code", """\
 # Merges both datasets (remapping VisDrone class indices into the merged
 # class list) and GENERATES the training YAML with correct nc/names.
 # Aborts with a clear error if 0 images are found.
 !python scripts/prepare_obstacle_dataset.py \\
-    --detectra /kaggle/input/dectectra-dataset \\
-    --visdrone /kaggle/input/visdrone-dataset \\
+    --detectra {DETECTRA} \\
+    --visdrone {VISDRONE} \\
     --out /kaggle/working/datasets/obstacle_combined \\
     --yaml-out /kaggle/working/obstacle_data.yaml
 !head -40 /kaggle/working/obstacle_data.yaml"""),
