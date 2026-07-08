@@ -106,13 +106,13 @@ obstacle = nb([
     ("code", BOOTSTRAP),
     ("code", "!pip install -q ultralytics onnx2tf onnx"),
     ("code", """\
-# Resolve the ACTUAL mount paths — Kaggle mount names don't always match
-# the dataset slug, so never hardcode them.
+# Resolve the ACTUAL mount paths — Kaggle sometimes mounts datasets
+# nested as /kaggle/input/datasets/<owner>/<slug>, so search 3 levels.
 import glob
-inputs = glob.glob('/kaggle/input/*')
-print('Mounted inputs:', inputs)
-DETECTRA = next(p for p in inputs if 'dect' in p.lower())
-VISDRONE = next((p for p in inputs if 'visdrone' in p.lower()), None)
+inputs = (glob.glob('/kaggle/input/*') + glob.glob('/kaggle/input/*/*')
+          + glob.glob('/kaggle/input/*/*/*'))
+DETECTRA = next(p for p in inputs if 'dect' in p.split('/')[-1].lower())
+VISDRONE = next((p for p in inputs if 'visdrone' in p.split('/')[-1].lower()), None)
 print('Detectra:', DETECTRA)
 print('VisDrone:', VISDRONE)
 !find {DETECTRA} -maxdepth 3 -type d | head -20"""),
