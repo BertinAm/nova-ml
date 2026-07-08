@@ -1,136 +1,169 @@
 # NOVA ML Pipeline
 
-Model Training, Distillation, Quantization & HuggingFace Deployment
+Model Training, Distillation, Quantization & HuggingFace Deployment — **Kaggle-first workflow**.
 
 | Field | Value |
 | --- | --- |
-| **Training Framework** | PyTorch 2.3+ with HuggingFace Transformers / timm / Ultralytics |
+| **Training Platform** | Kaggle Notebooks (free GPU: T4 x2 / P100, 12h sessions, 30h GPU/week) |
+| **Training Framework** | PyTorch 2.3+ with timm / Ultralytics / InsightFace |
 | **Deployment Format** | TensorFlow Lite INT8 |
-| **Compression** | Knowledge Distillation (Hinton et al., 2015) + Post-Training Quantization |
-| **Model Registry** | HuggingFace Hub [huggingface.co/nova-assistive](https://www.google.com/search?q=https://huggingface.co/nova-assistive) |
-| **Experiment Tracking** | Weights & Biases (wandb) |
+| **Compression** | Knowledge Distillation + INT8 Post-Training Quantization |
+| **Model Registry** | HuggingFace Hub under [huggingface.co/unixio](https://huggingface.co/unixio) |
 | **License** | MIT |
 
----
-
-## What This Repository Contains
-
-This repository is the offline ML research and training workspace for NOVA. It does not run in production. Its job is to produce the quantized TFLite model files that are bundled into the *nova-mobile* app and served via the *nova-backend* model registry.
-
-All trained models are published to the HuggingFace Hub organisation *nova-assistive*. After publishing, the SHA-256 checksum of each TFLite file is registered in the *nova-backend* model registry so the mobile app can discover and download updates over the air.
+This repository is the offline ML workspace for NOVA. It produces the quantized
+TFLite models bundled into *nova-mobile* and served OTA via the *nova-backend*
+model registry.
 
 ## Models
 
 | Module | Task | Teacher | Student | HuggingFace Repo |
 | --- | --- | --- | --- | --- |
-| MOD-01 | Obstacle detection | YOLOv8m | YOLOv8n (320x320) | *nova-assistive/obstacle-detection* |
-| MOD-04 | Currency classification | EfficientNet-B4 | MobileNetV3-Small (224x224) | *nova-assistive/currency-detection* |
-| MOD-05 (s1) | Face detection | RetinaFace-ResNet50 | BlazeFace (128x128) | *nova-assistive/face-detection* |
-| MOD-05 (s2) | Face embedding | ArcFace R100 | MobileFaceNet (112x112) | *nova-assistive/face-embedding* |
+| MOD-01 | Obstacle detection | YOLOv8m (via pseudo-labelling) | YOLOv8n @ 320x320 | `unixio/nova-obstacle-detection` |
+| MOD-04 | Currency classification | EfficientNet-B4 | MobileNetV3-Small @ 224 | `unixio/nova-currency-detection` |
+| MOD-05 (s1) | Face detection | RetinaFace | BlazeFace @ 128 | `unixio/nova-face-detection` |
+| MOD-05 (s2) | Face embedding | ArcFace (InsightFace buffalo_l) | MobileFaceNet @ 112 | `unixio/nova-face-embedding` |
+
+## One-Time Setup (10 minutes)
+
+1. **HuggingFace token**: huggingface.co → Settings → Access Tokens → create a
+   token with **write** access. Keep it — you'll paste it into Kaggle Secrets.
+2. **Kaggle secret**: In any Kaggle notebook → *Add-ons → Secrets → Add secret*
+   → name it exactly `HF_TOKEN`, paste your token. Attach the secret to each
+   NOVA notebook you run.
+3. **Push this repo to GitHub** (already at `BertinAm/nova-ml`) — the Kaggle
+   notebooks `git clone` it at the top of every session, so commit + push any
+   script change before re-running a notebook.
+4. Run `notebooks/00_setup_check.ipynb` on Kaggle once. It verifies GPU + token,
+   creates the four HF model repos under `unixio`, and smoke-tests the whole
+   obstacle pipeline on COCO128 in ~3 minutes.
+
+## Kaggle Workflow
+
+Upload each notebook from `notebooks/` to Kaggle (*Create → Notebook → File →
+Import Notebook*), or copy-paste the cells. For every notebook: **Settings →
+Accelerator → GPU**, **Internet → On**, attach the `HF_TOKEN` secret, and attach
+the datasets listed in its first cell.
+
+| Notebook | Trains | Attach these Kaggle datasets | Est. time |
+| --- | --- | --- | --- |
+| `00_setup_check.ipynb` | nothing (verification) | — | ~5 min |
+| `01_obstacle_detection.ipynb` | MOD-01 YOLOv8n | `jhontroya/dectectra-dataset`, `kushagrapandya/visdrone-dataset` | 6–9 h |
+| `02_currency_detection.ipynb` | MOD-04 MobileNetV3-S | **your private CFA dataset** (see below) | 2–4 h |
+| `03_face_embedding.ipynb` | MOD-05 MobileFaceNet | `hearthewind/vggface2-dataset` (subset), `jessicali9530/lfw-dataset` | 6–10 h |
+
+Each notebook ends by pushing the checkpoint + TFLite INT8 file + config.json
+(with SHA-256 checksum) to the matching `unixio/nova-*` HF repo.
+
+**Session limits**: Kaggle gives 12h per session and ~30h GPU per week. Enable
+*Persistence: Files* in notebook settings so checkpoints survive restarts; every
+trainer writes to `/kaggle/working/checkpoints/` and resumes from the best
+checkpoint if re-run.
+
+### The CFA currency dataset (you must build it)
+
+No public CFA franc dataset exists. Collect per the training guide (300+ images
+per denomination per side: photos under 4 lighting conditions + BEAC reference
+scans + synthetic augmentation + in-use context shots), organise as:
+
+```
+train|val|test /
+  fcfa_500 / *.jpg
+  fcfa_1000 / ...
+  fcfa_2000 / fcfa_5000 / fcfa_10000
+```
+
+then upload to Kaggle as a **private dataset** (*Datasets → New Dataset*) and
+attach it to `02_currency_detection.ipynb` (edit the `CFA_DATA` path in cell 3).
 
 ## Repository Structure
 
-```text
+```
 nova-ml/
+├── notebooks/                        # Kaggle notebooks (generated by make_notebooks.py)
+│   ├── 00_setup_check.ipynb
+│   ├── 01_obstacle_detection.ipynb
+│   ├── 02_currency_detection.ipynb
+│   ├── 03_face_embedding.ipynb
+│   └── make_notebooks.py             # source of truth — edit this, regenerate
 ├── scripts/
-│   ├── train_obstacle_distillation.py   # MOD-01 KD training
-│   ├── kd_trainer.py                    # Custom YOLOv8 KD trainer
-│   ├── train_currency_distillation.py   # MOD-04 KD training (2-phase)
-│   ├── train_face_detection.py          # MOD-05 BlazeFace fine-tune
-│   ├── train_face_embedding.py          # MOD-05 MobileFaceNet + ArcFace KD
-│   ├── evaluate_models.py               # Evaluation metrics for all models
-│   ├── convert_to_tflite.py             # PyTorch → ONNX → TFLite INT8
-│   ├── benchmark_tflite.py              # Latency benchmark on TFLite models
-│   ├── push_to_huggingface.py           # Publish all models to HF Hub
-│   └── register_model_in_backend.py     # Register new version in nova-backend
-├── configs/
-│   ├── obstacle_data.yaml               # Dataset config
-│   └── training_defaults.yaml           # Shared hyperparameter defaults
-├── datasets/                            # Local dataset folders (gitignored)
-├── checkpoints/                         # Saved model checkpoints (gitignored)
-├── exports/                             # ONNX and TFLite outputs (gitignored)
-└── requirements.txt
-
+│   ├── nova_common.py                # HF repos (unixio/*), token resolution, Kaggle paths
+│   ├── prepare_obstacle_dataset.py   # Detectra + VisDrone -> unified YOLO format
+│   ├── train_obstacle.py             # MOD-01: YOLOv8n train + native TFLite INT8 export
+│   ├── train_currency_distillation.py# MOD-04: 2-phase teacher finetune + KD
+│   ├── train_face_embedding.py       # MOD-05: MobileFaceNet + ArcFace + embedding KD
+│   ├── evaluate_models.py            # accuracy @ 0.85 gate, LFW verification
+│   ├── convert_to_tflite.py          # PyTorch -> ONNX -> onnx2tf -> TFLite INT8 + benchmark
+│   ├── push_to_huggingface.py        # publish artefacts + config.json + checksum
+│   └── register_model_in_backend.py  # upload .tflite to nova-backend /models/register
+├── configs/obstacle_data.yaml        # merged dataset config (fill class list after prepare)
+├── labels/cfa_labels.txt
+└── requirements.txt                  # for local runs; Kaggle preinstalls most of it
 ```
 
-## Getting Started
+## Full Pipeline Per Model
 
-### Prerequisites
+```
+Kaggle datasets ──> prepare/*.py ──> train_*.py ──> evaluate_models.py
+                                          │
+                                          v
+                       convert_to_tflite.py (INT8 + benchmark)
+                                          │
+                                          v
+                push_to_huggingface.py ──> huggingface.co/unixio/nova-*
+                                          │  (SHA-256 printed)
+                                          v
+        register_model_in_backend.py ──> nova-backend /models/register
+                                          │  (operator JWT, uploads .tflite)
+                                          v
+                            mobile app OTA download + checksum verify
+```
 
-* Python 3.11+
-* CUDA-capable GPU strongly recommended for training
-* A HuggingFace account with write access to the *nova-assistive* organisation
-* A Weights & Biases account for experiment tracking
+## Registering in the Backend
 
-### 1. Install dependencies
+After a model is published, register it so the mobile app can fetch it OTA
+(requires an operator account — `User.is_operator=true` in nova-backend):
 
 ```bash
-git clone https://github.com/your-org/nova-ml.git
-cd nova-ml
-python -m venv nova_ml_env
-source nova_ml_env/bin/activate
-pip install -r requirements.txt
-
+export NOVA_BACKEND_URL=https://your-backend
+export NOVA_OPERATOR_EMAIL=ops@example.com
+export NOVA_OPERATOR_PASSWORD=...
+python scripts/register_model_in_backend.py --module MOD-04 --version 1.0.0 \
+    --tflite exports/currency_detection_v1.tflite --notes "distilled MobileNetV3-S"
 ```
 
-### 2. Configure credentials
+## Deviations From the Training Guide (v1.1)
 
-```bash
-huggingface-cli login
-wandb login
-
-```
-
-### 3. Prepare datasets
-
-* **COCO 2017 (obstacle detection):** Download and place in `datasets/obstacle_combined/`.
-* **CFA currency:** Place in `datasets/cfa_currency/` with ImageFolder structure.
-* **WIDER FACE:** Use `pip install datasets && python -c "from datasets import load_dataset; load_dataset('wider_face')"`.
-
-### 4. Run the training pipeline
-
-1. `python scripts/train_obstacle_distillation.py`
-2. `python scripts/train_currency_distillation.py`
-3. `python scripts/train_face_embedding.py`
-4. `python scripts/evaluate_models.py`
-5. `python scripts/convert_to_tflite.py`
-6. `python scripts/benchmark_tflite.py`
-7. `python scripts/push_to_huggingface.py`
-8. `python scripts/register_model_in_backend.py`
-
-## Pipeline Overview
-
-| Step | Script | Input | Output |
-| --- | --- | --- | --- |
-| 1. Collect | Manual / LabelImg | Raw images | Annotated dataset |
-| 2. Train | train_*.py | Dataset + teacher | Student checkpoint |
-| 3. Eval | evaluate_models.py | Checkpoint + test data | Metrics (mAP, acc) |
-| 4. Convert | convert_to_tflite.py | Student checkpoint | Quantized .tflite |
-| 5. Benchmark | benchmark_tflite.py | .tflite file | Latency / FPS |
-| 6. Publish | push_to_huggingface.py | Artifacts | HF Repo + SHA-256 |
-| 7. Register | register_model_in_backend.py | SHA-256 | DB entry |
-| 8. OTA | nova-mobile app | Registry entry | Model download |
-
-## Branching Strategy
-
-* **main**: Stable, merged after model passes evaluation thresholds.
-* **dev**: Integration branch.
-* **feature/***: Specific module training experiments (e.g., *feature/obstacle-distillation*).
+- **HF account**: publishes under the personal account `unixio` instead of the
+  `nova-assistive` org (override with `NOVA_HF_USERNAME` env var if the org is
+  created later).
+- **Obstacle KD**: logit-level KD requires forking the Ultralytics trainer; we
+  train YOLOv8n directly (COCO-pretrained) with optional YOLOv8m
+  **pseudo-labelling** (`--pseudo-label-dir`) — distillation through data.
+- **TFLite conversion**: `onnx2tf` replaces the abandoned `onnx-tf`; YOLOv8 uses
+  Ultralytics' native `export(format='tflite', int8=True)`.
+- **Face detection (BlazeFace)**: MediaPipe already ships a production BlazeFace
+  TFLite (~224 KB, well under the 5 MB budget) — use it directly in the mobile
+  app rather than retraining; retraining adds risk for no accuracy gain.
 
 ## Important Notes
 
-* `datasets/`, `checkpoints/`, and `exports/` are gitignored to prevent committing large binary files.
-* Training from scratch on a single NVIDIA T4: obstacle (~8h), currency (~3h), face embedding (~12h).
-* `register_model_in_backend.py` requires an admin JWT—never hardcode it.
+- `datasets/`, `checkpoints/`, `exports/`, `runs/` are gitignored — never commit
+  large binaries; artefacts live on the HF Hub.
+- Never hardcode tokens: `HF_TOKEN` comes from Kaggle Secrets (or env locally);
+  backend credentials from env vars.
+- Acceptance thresholds (from the training guide): obstacle mAP50 ≥ 30% & < 15 MB;
+  currency ≥ 93% overall / ≥ 90% per class @ conf ≥ 0.85 & < 10 MB;
+  face embedding LFW ≥ 99% & < 12 MB.
 
 ## Related Repositories
 
-* [nova-backend](https://www.google.com/search?q=https://github.com/your-org/nova-backend) FastAPI server and model registry
-* [nova-mobile](https://www.google.com/search?q=https://github.com/your-org/nova-mobile) Flutter Android application
+- **nova-backend** — FastAPI server and model registry (`D:\nova\nova-backend`)
+- **nova-mobile** — Flutter Android application
 
 ---
 
-**Licence**
-MIT see LICENSE file.
+**Licence**: MIT — see LICENSE.
 
-University of Buea, Faculty of Engineering and Technology, Department of Computer Engineering. Internet of Things and Video Processing Academic Year 2025/2026.
+University of Buea, Faculty of Engineering and Technology, Department of Computer
+Engineering. Internet of Things and Video Processing — Academic Year 2025/2026.

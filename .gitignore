@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+datasets/
+checkpoints/
+exports/
+runs/
+wandb/
+*.pt
+*.pth
+*.onnx
+*.tflite
+*_saved_model/
+kaggle.json
+.env

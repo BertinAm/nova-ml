@@ -1,0 +1,34 @@
+# MOD-01 combined dataset config (Detectra + VisDrone, YOLO format).
+#
+# IMPORTANT: after running scripts/prepare_obstacle_dataset.py, replace the
+# placeholder class list below with the real merged list from
+# datasets/detectra/data.yaml + the VisDrone extras, and set `nc` to match.
+# On Kaggle, `path` is typically /kaggle/working/datasets/obstacle_combined.
+
+path: ./datasets/obstacle_combined
+train: images/train
+val: images/val
+
+nc: 80
+names:
+  0: person
+  1: bicycle
+  2: car
+  3: motorcycle
+  # ... fill in Detectra classes 4-75 from datasets/detectra/data.yaml
+  76: tricycle
+  77: awning-tricycle
+  78: van
+  79: motor
+
+# Augmentation — tuned for a chest-mounted camera perspective
+hsv_h: 0.015
+hsv_s: 0.7
+hsv_v: 0.4
+degrees: 5.0      # small rotation only — chest mount is stable
+translate: 0.1
+scale: 0.5
+flipud: 0.0       # disabled — gravity direction is constant
+fliplr: 0.5
+mosaic: 1.0
+mixup: 0.1

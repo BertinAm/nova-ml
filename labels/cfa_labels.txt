@@ -1,0 +1,5 @@
+fcfa_500
+fcfa_1000
+fcfa_2000
+fcfa_5000
+fcfa_10000
