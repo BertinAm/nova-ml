@@ -122,12 +122,12 @@ print('VisDrone:', VISDRONE)
 # so the combined dataset itself costs ~100 MB of labels only.
 !rm -rf /kaggle/working/datasets
 !df -h /kaggle/working | tail -1
-# Merges both datasets (remapping VisDrone class indices into the merged
-# class list) and GENERATES the training YAML with correct nc/names.
-# Aborts with a clear error if 0 images are found.
+# Detectra-only (v1.0.0 lesson: VisDrone's aerial drone perspective is
+# wrong for a chest-mounted camera — its tiny objects at 320px dragged
+# mAP50 down to 10%. Pedestrian-height Detectra alone is the right data).
+# GENERATES the training YAML with correct nc/names; aborts if 0 images.
 !python scripts/prepare_obstacle_dataset.py \\
     --detectra {DETECTRA} \\
-    --visdrone {VISDRONE} \\
     --out /kaggle/working/datasets/obstacle_combined \\
     --yaml-out /kaggle/working/obstacle_data.yaml
 !head -40 /kaggle/working/obstacle_data.yaml"""),
@@ -140,7 +140,7 @@ print('VisDrone:', VISDRONE)
 # Add --fraction 0.5 to halve it again if you're in a real hurry.
 # If a session dies mid-run, re-run this cell with --resume.
 !python scripts/train_obstacle.py --data /kaggle/working/obstacle_data.yaml \\
-    --epochs 40 --imgsz 320 --batch 64 --workers 4 --patience 10"""),
+    --epochs 60 --imgsz 320 --batch 64 --workers 4 --patience 15"""),
     ("code", """\
 # Publish to HuggingFace: unixio/nova-obstacle-detection
 import glob
@@ -152,7 +152,7 @@ tflite_path = candidates[0]
 best_pt = '/kaggle/working/runs/obstacle_student/weights/best.pt'
 !python scripts/push_to_huggingface.py --module MOD-01 \\
     --pytorch {best_pt} --tflite {tflite_path} \\
-    --eval-json /kaggle/working/evaluation/obstacle_results.json --version 1.0.0"""),
+    --eval-json /kaggle/working/evaluation/obstacle_results.json --version 1.1.0"""),
 ])
 
 # ── 02: currency ──────────────────────────────────────────────────────
