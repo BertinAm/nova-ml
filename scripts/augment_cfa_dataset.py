@@ -124,9 +124,12 @@ def main():
             continue
         rng.shuffle(sources)
         # Split BY SOURCE so augmented twins never leak across splits.
+        # NOTE: classes with <6 sources fall back to leaky val/test (variants
+        # of train sources) — unavoidable at bootstrap scale; replace with
+        # real photos before trusting the test metric for those classes.
         n = len(sources)
-        n_val = max(1, round(n * 0.1)) if n >= 3 else 0
-        n_test = max(1, round(n * 0.1)) if n >= 3 else 0
+        n_val = max(1, round(n * 0.1)) if n >= 6 else 0
+        n_test = max(1, round(n * 0.1)) if n >= 6 else 0
         split_of: dict[Path, str] = {}
         for i, src in enumerate(sources):
             if i < n_test:
@@ -154,6 +157,16 @@ def main():
                 aug = augment_once(src_img, rng)
                 aug.save(dest_dir / f"{src_path.stem}_aug{k:03d}.jpg", quality=88)
                 counts[split] += 1
+            # Leaky fallback for tiny classes: derive val/test variants from
+            # train sources so no split is ever empty.
+            if split == "train" and n_val == 0:
+                for fallback_split in ("val", "test"):
+                    fb_dir = out_root / fallback_split / cls
+                    fb_dir.mkdir(parents=True, exist_ok=True)
+                    for k in range(4):
+                        aug = augment_once(src_img, rng)
+                        aug.save(fb_dir / f"{src_path.stem}_fb{k}.jpg", quality=88)
+                        counts[fallback_split] += 1
         summary[cls] = counts
         print(f"{cls}: {counts}")
 

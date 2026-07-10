@@ -26,7 +26,6 @@ from torchvision import datasets, transforms
 
 TEACHER_MODEL = "efficientnet_b4"
 STUDENT_MODEL = "mobilenetv3_small_100"
-NUM_CLASSES = 5
 TEMPERATURE = 5.0
 ALPHA = 0.8
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -145,15 +144,14 @@ def main():
 
     train_ds = datasets.ImageFolder(data_dir / "train", transform=train_transforms)
     val_ds = datasets.ImageFolder(data_dir / "val", transform=val_transforms)
-    print(f"Classes: {train_ds.classes}")
-    assert len(train_ds.classes) == NUM_CLASSES, (
-        f"Expected {NUM_CLASSES} class folders, found {train_ds.classes}"
-    )
+    num_classes = len(train_ds.classes)
+    print(f"Classes ({num_classes}): {train_ds.classes}")
+    assert train_ds.classes == val_ds.classes, "train/val class folders differ"
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=2)
 
-    teacher = timm.create_model(TEACHER_MODEL, pretrained=True, num_classes=NUM_CLASSES).to(DEVICE)
-    student = timm.create_model(STUDENT_MODEL, pretrained=True, num_classes=NUM_CLASSES).to(DEVICE)
+    teacher = timm.create_model(TEACHER_MODEL, pretrained=True, num_classes=num_classes).to(DEVICE)
+    student = timm.create_model(STUDENT_MODEL, pretrained=True, num_classes=num_classes).to(DEVICE)
 
     finetune_teacher(teacher, train_loader, args.teacher_epochs)
     teacher_acc = evaluate(teacher, val_loader)

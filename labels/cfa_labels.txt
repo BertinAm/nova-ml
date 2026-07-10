@@ -1,5 +1,10 @@
-fcfa_500
-fcfa_1000
-fcfa_2000
-fcfa_5000
-fcfa_10000
+fcfa_coin_100
+fcfa_coin_200
+fcfa_coin_25
+fcfa_coin_50
+fcfa_coin_500
+fcfa_note_1000
+fcfa_note_10000
+fcfa_note_2000
+fcfa_note_500
+fcfa_note_5000
