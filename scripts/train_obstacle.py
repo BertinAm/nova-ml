@@ -42,9 +42,22 @@ def main():
     parser.add_argument("--data", required=True,
                         help="Generated YAML from prepare_obstacle_dataset.py, or coco128.yaml for smoke test")
     parser.add_argument("--model", default="yolov8n.pt")
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=40,
+                        help="YOLOv8n starts COCO-pretrained; fine-tuning converges in "
+                             "~30-40 epochs. 100 is diminishing returns.")
     parser.add_argument("--imgsz", type=int, default=320)
-    parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--batch", type=int, default=64)
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Dataloader workers. Kaggle has 4 CPUs; the default 2 "
+                             "starves the GPU.")
+    parser.add_argument("--patience", type=int, default=10,
+                        help="Early stopping: stop when val mAP hasn't improved for "
+                             "this many epochs.")
+    parser.add_argument("--fraction", type=float, default=1.0,
+                        help="Use this fraction of the training set per epoch "
+                             "(e.g. 0.5 halves epoch time).")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from runs/obstacle_student/weights/last.pt")
     parser.add_argument("--pseudo-label-dir", default=None,
                         help="If set, run YOLOv8m pseudo-labelling on this image dir first")
     args = parser.parse_args()
@@ -54,16 +67,24 @@ def main():
     if args.pseudo_label_dir:
         pseudo_label("yolov8m.pt", args.pseudo_label_dir, str(work_dir() / "pseudo"))
 
-    student = YOLO(args.model)
-    results = student.train(
-        data=args.data,
-        epochs=args.epochs,
-        imgsz=args.imgsz,
-        batch=args.batch,
-        project=str(work_dir() / "runs"),
-        name="obstacle_student",
-        exist_ok=True,
-    )
+    last = work_dir() / "runs" / "obstacle_student" / "weights" / "last.pt"
+    if args.resume and last.exists():
+        student = YOLO(str(last))
+        results = student.train(resume=True)
+    else:
+        student = YOLO(args.model)
+        results = student.train(
+            data=args.data,
+            epochs=args.epochs,
+            imgsz=args.imgsz,
+            batch=args.batch,
+            workers=args.workers,
+            patience=args.patience,
+            fraction=args.fraction,
+            project=str(work_dir() / "runs"),
+            name="obstacle_student",
+            exist_ok=True,
+        )
 
     metrics = student.val(data=args.data, imgsz=args.imgsz)
     summary = {

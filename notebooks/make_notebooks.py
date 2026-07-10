@@ -134,8 +134,13 @@ print('VisDrone:', VISDRONE)
     ("code", """\
 # Full training + TFLite INT8 export (Ultralytics native export).
 # STOP if the previous cell errored — do not burn GPU hours on 0 images.
+# Fast profile: 40 epochs + early stopping (patience 10) + batch 64 +
+# 4 dataloader workers ≈ 2-3h on a T4 and typically lands within ~1-2
+# mAP points of a 100-epoch run (YOLOv8n starts COCO-pretrained).
+# Add --fraction 0.5 to halve it again if you're in a real hurry.
+# If a session dies mid-run, re-run this cell with --resume.
 !python scripts/train_obstacle.py --data /kaggle/working/obstacle_data.yaml \\
-    --epochs 100 --imgsz 320 --batch 32"""),
+    --epochs 40 --imgsz 320 --batch 64 --workers 4 --patience 10"""),
     ("code", """\
 # Publish to HuggingFace: unixio/nova-obstacle-detection
 import glob
