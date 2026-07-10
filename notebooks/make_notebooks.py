@@ -158,21 +158,36 @@ best_pt = '/kaggle/working/runs/obstacle_student/weights/best.pt'
 # ── 02: currency ──────────────────────────────────────────────────────
 currency = nb([
     ("md", "# NOVA 02 — MOD-04 Currency Detection (MobileNetV3-Small)\n"
-           "**Prerequisite:** upload your team-collected CFA images as a **private "
-           "Kaggle dataset** with the ImageFolder layout "
-           "(`train|val|test / fcfa_500 ... fcfa_10000`), then attach it here.\n\n"
-           "No public CFA dataset exists — see section 4.3 of the training guide "
-           "for the collection protocol (300+ images per denomination per side)."),
+           "**10 classes**: notes 500/1000/2000/5000/10000 + coins 25/50/100/200/500 "
+           "(incl. the new BEAC Type-2024 coin series).\n\n"
+           "**Prerequisite:** upload `cfa_currency_kaggle.zip` (built by "
+           "`scrape_cfa_images.py` + `augment_cfa_dataset.py` — official BEAC "
+           "scans, augmented; 1830 train / 120 val / 120 test) as a **private "
+           "Kaggle dataset**, attach it here, and set CFA_DATA below.\n\n"
+           "The bootstrap dataset uses clean official scans + augmentation. "
+           "Coin classes have leaky val/test (few sources) — treat coin test "
+           "metrics as optimistic until team-collected photos are added."),
     ("code", BOOTSTRAP),
     ("code", "!pip install -q timm onnx2tf onnx"),
     ("code", """\
-# Point at your attached dataset — EDIT the slug to match yours
-CFA_DATA = '/kaggle/input/cfa-currency-dataset'   # <-- your dataset slug
+# Resolve the attached dataset mount (search 3 levels — Kaggle may nest
+# under /kaggle/input/datasets/<owner>/<slug>)
+import glob, os
+inputs = (glob.glob('/kaggle/input/*') + glob.glob('/kaggle/input/*/*')
+          + glob.glob('/kaggle/input/*/*/*'))
+CFA_DATA = next(p for p in inputs
+                if 'cfa' in p.split('/')[-1].lower() and os.path.isdir(p))
+# If the zip extracted with a wrapper folder, descend into it
+if not os.path.isdir(f'{CFA_DATA}/train'):
+    CFA_DATA = next(p for p in glob.glob(f'{CFA_DATA}/*')
+                    if os.path.isdir(f'{p}/train'))
+print('CFA_DATA =', CFA_DATA)
 !ls {CFA_DATA}/train"""),
     ("code", """\
-# Two-phase: fine-tune EfficientNet-B4 teacher, distill into MobileNetV3-Small
+# Two-phase: fine-tune EfficientNet-B4 teacher, distill into MobileNetV3-Small.
+# Class count is auto-detected from the train/ folders (10).
 !python scripts/train_currency_distillation.py --data-dir {CFA_DATA} \\
-    --teacher-epochs 30 --student-epochs 80 --batch-size 32"""),
+    --teacher-epochs 20 --student-epochs 60 --batch-size 64"""),
     ("code", """\
 # Held-out test evaluation at the 0.85 confidence gate (FR-04-03)
 !python scripts/evaluate_models.py currency \\
@@ -182,7 +197,7 @@ CFA_DATA = '/kaggle/input/cfa-currency-dataset'   # <-- your dataset slug
 # Convert to TFLite INT8 (calibrate on val images) + benchmark
 !python scripts/convert_to_tflite.py \\
     --checkpoint /kaggle/working/checkpoints/currency_student_best.pth \\
-    --arch mobilenetv3_small_100 --num-classes 5 --input-size 224 \\
+    --arch mobilenetv3_small_100 --num-classes 10 --input-size 224 \\
     --out /kaggle/working/exports/currency_detection_v1.tflite \\
     --calib-dir {CFA_DATA}/val --benchmark"""),
     ("code", """\
