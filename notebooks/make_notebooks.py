@@ -263,21 +263,12 @@ assert VGG_DATA, 'Could not locate identity-folder root — inspect the layout a
 print('VGG_DATA =', VGG_DATA, '| identities (sample count):',
       len(os.listdir(VGG_DATA)))"""),
     ("code", """\
-# Reuse an already-trained checkpoint from HF if present (skips the ~6-10h
-# training). Delete pytorch/face_embedding_best.pth on HF to force retrain.
-import shutil
-from huggingface_hub import hf_hub_download
-os.makedirs('/kaggle/working/checkpoints', exist_ok=True)
-try:
-    p = hf_hub_download('unixio/nova-face-embedding',
-                        'pytorch/face_embedding_best.pth',
-                        token=os.environ['HF_TOKEN'])
-    shutil.copy(p, '/kaggle/working/checkpoints/face_embedding_best.pth')
-    SKIP_TRAINING = True
-    print('Reusing trained checkpoint from HF — skipping training.')
-except Exception as e:
-    SKIP_TRAINING = False
-    print('No checkpoint on HF — will train.')"""),
+# FORCE RETRAIN: the checkpoint currently on HF (v1.0.0) is a known-bad
+# collapsed model — LFW accuracy 0.500 (random). Do NOT reuse it. Once a
+# genuinely good checkpoint is published, flip this back to True to save
+# ~90 min on conversion-only re-runs.
+SKIP_TRAINING = False
+print('Forcing full retrain — HF checkpoint is the known-collapsed v1.0.0 model.')"""),
     ("code", """\
 # MobileFaceNet + ArcFace loss + embedding-KD from InsightFace teacher.
 # --max-identities 2000 keeps one run inside Kaggle's 12h session limit.
