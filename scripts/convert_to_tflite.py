@@ -31,44 +31,63 @@ def export_onnx(model, input_size: int, onnx_path: str, opset: int = 17):
     print(f"ONNX exported: {onnx_path}")
 
 
-def onnx_to_tflite_int8(onnx_path: str, tflite_path: str, representative_gen):
-    """Convert via onnx2tf (maintained successor to onnx-tf) then quantize."""
-    import subprocess
-
-    import tensorflow as tf
-
-    saved_dir = onnx_path.replace(".onnx", "_saved_model")
-    subprocess.run(["onnx2tf", "-i", onnx_path, "-o", saved_dir, "-osd"], check=True)
-
-    converter = tf.lite.TFLiteConverter.from_saved_model(saved_dir)
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    converter.representative_dataset = representative_gen
-    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-    converter.inference_input_type = tf.int8
-    converter.inference_output_type = tf.int8
-    tflite_model = converter.convert()
-    Path(tflite_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(tflite_path).write_bytes(tflite_model)
-    print(f"TFLite INT8: {tflite_path} ({len(tflite_model) / 1024 / 1024:.2f} MB)")
-
-
-def make_representative_dataset(calib_dir: str, input_size: int, n_samples: int = 200):
-    """Yield calibration samples from a folder of images (NHWC float32)."""
+def build_calibration_npy(calib_dir: str, input_size: int, out_path: str,
+                          n_samples: int = 200) -> str:
+    """Save an (N, H, W, 3) float32 [0,1] array of calibration images for
+    onnx2tf's -cind option (mean/std normalisation is passed separately)."""
     from PIL import Image
 
     paths = [p for p in Path(calib_dir).rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png")]
     paths = paths[:n_samples]
     if not paths:
         raise ValueError(f"No calibration images found in {calib_dir}")
+    arrays = []
+    for p in paths:
+        img = Image.open(p).convert("RGB").resize((input_size, input_size))
+        arrays.append(np.asarray(img, dtype=np.float32) / 255.0)
+    arr = np.stack(arrays)
+    np.save(out_path, arr)
+    print(f"Calibration set: {arr.shape} -> {out_path}")
+    return out_path
 
-    def generator():
-        for p in paths:
-            img = Image.open(p).convert("RGB").resize((input_size, input_size))
-            arr = np.asarray(img, dtype=np.float32) / 255.0
-            arr = (arr - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
-            yield [arr[np.newaxis, ...].astype(np.float32)]
 
-    return generator
+def onnx_to_tflite_int8(onnx_path: str, tflite_path: str, calib_dir: str, input_size: int):
+    """Convert ONNX -> INT8 TFLite in one step via onnx2tf's own quantizer.
+
+    Newer onnx2tf versions use a direct-flatbuffer path and no longer emit a
+    TF SavedModel, so the old two-step (SavedModel -> TFLiteConverter) breaks.
+    ``-oiqt`` makes onnx2tf produce the quantized variants itself; ``-cind``
+    supplies real calibration images with ImageNet mean/std.
+    """
+    import subprocess
+
+    out_dir = str(Path(onnx_path).with_suffix("")) + "_tflite"
+    calib_npy = str(Path(out_dir).parent / "calibration.npy")
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    build_calibration_npy(calib_dir, input_size, calib_npy)
+
+    subprocess.run(
+        [
+            "onnx2tf", "-i", onnx_path, "-o", out_dir, "-oiqt",
+            "-cind", "input", calib_npy,
+            "[[[[0.485,0.456,0.406]]]]", "[[[[0.229,0.224,0.225]]]]",
+        ],
+        check=True,
+    )
+
+    # onnx2tf writes several variants; prefer full-integer (int8 in/out).
+    candidates = (
+        sorted(Path(out_dir).glob("*_full_integer_quant.tflite"))
+        or sorted(Path(out_dir).glob("*_integer_quant.tflite"))
+    )
+    if not candidates:
+        raise FileNotFoundError(f"No quantized tflite produced in {out_dir}: "
+                                f"{[p.name for p in Path(out_dir).iterdir()]}")
+    src = candidates[0]
+    Path(tflite_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(tflite_path).write_bytes(src.read_bytes())
+    size_mb = Path(tflite_path).stat().st_size / 1024 / 1024
+    print(f"TFLite INT8: {tflite_path} ({size_mb:.2f} MB, from {src.name})")
 
 
 def benchmark_tflite(tflite_path: str, n_runs: int = 100):
@@ -117,8 +136,7 @@ def main():
 
     onnx_path = args.out.replace(".tflite", ".onnx")
     export_onnx(model, args.input_size, onnx_path)
-    rep_gen = make_representative_dataset(args.calib_dir, args.input_size)
-    onnx_to_tflite_int8(onnx_path, args.out, rep_gen)
+    onnx_to_tflite_int8(onnx_path, args.out, args.calib_dir, args.input_size)
 
     if args.benchmark:
         benchmark_tflite(args.out)
