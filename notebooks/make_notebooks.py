@@ -242,26 +242,78 @@ face = nb([
     ("code", BOOTSTRAP),
     ("code", "!pip install -q insightface onnxruntime-gpu onnx2tf onnx"),
     ("code", """\
-# Locate the identity-folder root inside the attached dataset
-# (layout may nest one level — adjust after inspecting)
-!find /kaggle/input/vggface2-112x112 -maxdepth 2 -type d | head -10
-VGG_DATA = '/kaggle/input/vggface2-112x112/train'   # one folder per identity
-!ls {VGG_DATA} | wc -l"""),
+# Auto-resolve mounts (Kaggle nests datasets 3 levels deep) and locate the
+# identity-folder root: the directory whose children are identity folders.
+import glob, os
+inputs = (glob.glob('/kaggle/input/*') + glob.glob('/kaggle/input/*/*')
+          + glob.glob('/kaggle/input/*/*/*'))
+VGG_ROOT = next(p for p in inputs if 'vggface' in p.split('/')[-1].lower())
+print('VGG_ROOT =', VGG_ROOT)
+!find {VGG_ROOT} -maxdepth 2 -type d | head -10
+# Pick the deepest dir that contains many subfolders (identities)
+VGG_DATA = None
+for cand in [VGG_ROOT] + glob.glob(f'{VGG_ROOT}/*') + glob.glob(f'{VGG_ROOT}/*/*'):
+    if os.path.isdir(cand):
+        subs = [s for s in os.listdir(cand)[:50]
+                if os.path.isdir(os.path.join(cand, s))]
+        if len(subs) >= 40:  # many identity folders
+            VGG_DATA = cand
+            break
+assert VGG_DATA, 'Could not locate identity-folder root — inspect the layout above'
+print('VGG_DATA =', VGG_DATA, '| identities (sample count):',
+      len(os.listdir(VGG_DATA)))"""),
+    ("code", """\
+# Reuse an already-trained checkpoint from HF if present (skips the ~6-10h
+# training). Delete pytorch/face_embedding_best.pth on HF to force retrain.
+import shutil
+from huggingface_hub import hf_hub_download
+os.makedirs('/kaggle/working/checkpoints', exist_ok=True)
+try:
+    p = hf_hub_download('unixio/nova-face-embedding',
+                        'pytorch/face_embedding_best.pth',
+                        token=os.environ['HF_TOKEN'])
+    shutil.copy(p, '/kaggle/working/checkpoints/face_embedding_best.pth')
+    SKIP_TRAINING = True
+    print('Reusing trained checkpoint from HF — skipping training.')
+except Exception as e:
+    SKIP_TRAINING = False
+    print('No checkpoint on HF — will train.')"""),
     ("code", """\
 # MobileFaceNet + ArcFace loss + embedding-KD from InsightFace teacher.
 # --max-identities 2000 keeps one run inside Kaggle's 12h session limit.
-# Use --no-teacher to skip distillation if insightface weights fail to load.
-!python scripts/train_face_embedding.py --data-dir {VGG_DATA} \\
-    --epochs 50 --batch-size 128 --max-identities 2000"""),
+# If insightface teacher fails to load, rerun with --no-teacher.
+if not SKIP_TRAINING:
+    !python scripts/train_face_embedding.py --data-dir {VGG_DATA} \\
+        --epochs 50 --batch-size 128 --max-identities 2000
+else:
+    print('Skipped — using HF checkpoint.')"""),
     ("code", """\
-# Convert to TFLite INT8 (calibrate on a slice of training identities)
+# Build a SMALL calibration dir (200 images). Never point the converter at
+# the full dataset — rglob over 3M files takes forever.
+import random
+CALIB = '/kaggle/working/calib'
+shutil.rmtree(CALIB, ignore_errors=True)
+os.makedirs(CALIB)
+rng = random.Random(42)
+idents = rng.sample(sorted(os.listdir(VGG_DATA)), 200)
+for i, ident in enumerate(idents):
+    d = os.path.join(VGG_DATA, ident)
+    imgs = [f for f in os.listdir(d) if f.lower().endswith(('.jpg', '.png'))]
+    if imgs:
+        shutil.copy(os.path.join(d, imgs[0]), f'{CALIB}/{i:03d}_{imgs[0]}')
+print(len(os.listdir(CALIB)), 'calibration images')"""),
+    ("code", """\
+# Convert: tries INT8 first, falls back to float32 (never ship onnx2tf's
+# fp16 — true fp16 tensors fail to load on standard TFLite runtimes).
 !python scripts/convert_to_tflite.py \\
     --checkpoint /kaggle/working/checkpoints/face_embedding_best.pth \\
     --arch mobilefacenet --input-size 112 \\
     --out /kaggle/working/exports/face_embedding_v1.tflite \\
-    --calib-dir {VGG_DATA} --benchmark"""),
+    --calib-dir {CALIB} --benchmark"""),
     ("code", """\
-# Publish to HuggingFace: unixio/nova-face-embedding
+# Publish to HuggingFace: unixio/nova-face-embedding.
+# NOTE: LFW verification eval is still TODO (needs pair-list parsing for the
+# attached LFW dataset) — publish records training config only for now.
 !python scripts/push_to_huggingface.py --module MOD-05-embed \\
     --pytorch /kaggle/working/checkpoints/face_embedding_best.pth \\
     --tflite /kaggle/working/exports/face_embedding_v1.tflite \\
