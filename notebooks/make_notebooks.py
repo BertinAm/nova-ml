@@ -259,7 +259,10 @@ obstacle_coco = nb([
            "SRS FR-01-03 ('80-class COCO dataset') with real TTS-speakable names.\n\n"
            "**~10 minutes total. No datasets to attach.** GPU + Internet + HF_TOKEN."),
     ("code", BOOTSTRAP),
-    ("code", "!pip install -q ultralytics onnx2tf onnx"),
+    ("code", """\
+# Pre-install the LiteRT converter stack so Ultralytics' AutoUpdate doesn't
+# swap numpy's deps mid-kernel (that corrupts the running Python process).
+!pip install -q ultralytics 'litert-torch>=0.9.0' 'ai-edge-litert>=2.1.4' ai-edge-quantizer"""),
     ("code", """\
 # Evaluate stock YOLOv8n on COCO128 at 320px (deployment resolution).
 # COCO128 is small — cite Ultralytics' official full-COCO numbers alongside
@@ -284,11 +287,17 @@ names = [model.names[i] for i in range(len(model.names))]
 open('/kaggle/working/labels/coco_labels.txt', 'w').write('\\n'.join(names) + '\\n')
 print(len(names), 'classes:', names[:8], '...')"""),
     ("code", """\
-# INT8 quantization at 320 (COCO128 as calibration data) + size check
-exported = model.export(format='tflite', int8=True, imgsz=320, data='coco128.yaml')
-print('Exported:', exported)
-size_mb = os.path.getsize(str(exported)) / 1e6
-print(f'{size_mb:.2f} MB (budget: <15 MB)')
+# INT8 quantization at 320 (COCO128 calibration), run in a FRESH subprocess
+# via the yolo CLI — immune to any in-kernel package-state issues.
+!yolo export model=yolov8n.pt format=litert quantize=int8 imgsz=320 data=coco128.yaml
+import glob
+candidates = glob.glob('**/yolov8n*int8*.tflite', recursive=True) + \\
+             glob.glob('**/yolov8n*_int8.tflite', recursive=True)
+print('candidates:', candidates)
+assert candidates, 'INT8 TFLite not found after export'
+exported = candidates[0]
+size_mb = os.path.getsize(exported) / 1e6
+print(f'{exported}: {size_mb:.2f} MB (budget: <15 MB)')
 assert size_mb < 15"""),
     ("code", """\
 # Publish v1.2.0
