@@ -27,8 +27,12 @@ MODULE_CONFIGS: dict[str, dict] = {
         "module_id": "MOD-01",
         "architecture": "YOLOv8n",
         "input_size": [320, 320],
-        "distilled_from": "YOLOv8m",
-        "datasets": ["detectra", "visdrone"],
+        # v1.2.0+: stock COCO-pretrained weights, INT8-quantized. The
+        # Detectra/VisDrone fine-tunes (v1.0.0/v1.1.0) scored ~10% mAP50 and
+        # are kept on the Hub as ablations only. 80 real COCO class names —
+        # see labels/ in the repo; the app's TTS must read names from there.
+        "num_classes": 80,
+        "training": "COCO-pretrained (Ultralytics), no fine-tune",
         "near_threshold_m": 1.5,
         "warning_threshold_m": 3.0,
         "confidence_threshold": 0.55,

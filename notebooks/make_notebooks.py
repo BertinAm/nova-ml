@@ -248,9 +248,60 @@ VGG_DATA = '/kaggle/input/vggface2-112x112/train'   # one folder per identity
     --version 1.0.0"""),
 ])
 
+# ── 01b: obstacle COCO baseline (no training — quantize & publish) ────
+obstacle_coco = nb([
+    ("md", "# NOVA 01b — MOD-01 Obstacle Detection v1.2.0 (COCO baseline)\n"
+           "**No training.** Takes stock COCO-pretrained YOLOv8n (80 real class "
+           "names), quantizes to INT8 @ 320px, evaluates on COCO128, benchmarks, "
+           "and publishes to `unixio/nova-obstacle-detection` as v1.2.0.\n\n"
+           "Rationale: Detectra/VisDrone fine-tunes (v1.0.0/v1.1.0) reached only "
+           "~10% mAP50 — kept on the Hub as ablations. The stock model satisfies "
+           "SRS FR-01-03 ('80-class COCO dataset') with real TTS-speakable names.\n\n"
+           "**~10 minutes total. No datasets to attach.** GPU + Internet + HF_TOKEN."),
+    ("code", BOOTSTRAP),
+    ("code", "!pip install -q ultralytics onnx2tf onnx"),
+    ("code", """\
+# Evaluate stock YOLOv8n on COCO128 at 320px (deployment resolution).
+# COCO128 is small — cite Ultralytics' official full-COCO numbers alongside
+# (YOLOv8n: 37.3 mAP50-95 @ 640) in the report.
+import json, os
+from ultralytics import YOLO
+model = YOLO('yolov8n.pt')
+metrics = model.val(data='coco128.yaml', imgsz=320)
+results = {
+    'mAP50_coco128@320': float(metrics.box.map50),
+    'mAP50-95_coco128@320': float(metrics.box.map),
+    'official_coco_mAP50-95@640': 0.373,
+    'note': 'stock COCO-pretrained YOLOv8n, no fine-tune',
+}
+os.makedirs('/kaggle/working/evaluation', exist_ok=True)
+json.dump(results, open('/kaggle/working/evaluation/obstacle_results.json', 'w'), indent=2)
+print(json.dumps(results, indent=2))"""),
+    ("code", """\
+# Write the 80 COCO class names — the app's TTS reads these
+os.makedirs('/kaggle/working/labels', exist_ok=True)
+names = [model.names[i] for i in range(len(model.names))]
+open('/kaggle/working/labels/coco_labels.txt', 'w').write('\\n'.join(names) + '\\n')
+print(len(names), 'classes:', names[:8], '...')"""),
+    ("code", """\
+# INT8 quantization at 320 (COCO128 as calibration data) + size check
+exported = model.export(format='tflite', int8=True, imgsz=320, data='coco128.yaml')
+print('Exported:', exported)
+size_mb = os.path.getsize(str(exported)) / 1e6
+print(f'{size_mb:.2f} MB (budget: <15 MB)')
+assert size_mb < 15"""),
+    ("code", """\
+# Publish v1.2.0
+!python scripts/push_to_huggingface.py --module MOD-01 \\
+    --tflite {exported} \\
+    --labels /kaggle/working/labels/coco_labels.txt \\
+    --eval-json /kaggle/working/evaluation/obstacle_results.json --version 1.2.0"""),
+])
+
 for name, notebook in [
     ("00_setup_check.ipynb", setup),
     ("01_obstacle_detection.ipynb", obstacle),
+    ("01b_obstacle_coco_baseline.ipynb", obstacle_coco),
     ("02_currency_detection.ipynb", currency),
     ("03_face_embedding.ipynb", face),
 ]:
