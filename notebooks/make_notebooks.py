@@ -283,8 +283,12 @@ except Exception as e:
 # --max-identities 2000 keeps one run inside Kaggle's 12h session limit.
 # If insightface teacher fails to load, rerun with --no-teacher.
 if not SKIP_TRAINING:
+    # --no-teacher: InsightFace teacher only runs on CPU here (onnxruntime
+    #   shadows the GPU build), making KD ~10x slower. ArcFace loss alone
+    #   trains a solid MobileFaceNet. --max-per-identity bounds epoch length.
     !python scripts/train_face_embedding.py --data-dir {VGG_DATA} \\
-        --epochs 50 --batch-size 128 --max-identities 2000
+        --epochs 30 --batch-size 256 --max-identities 2000 \\
+        --max-per-identity 40 --no-teacher
 else:
     print('Skipped — using HF checkpoint.')"""),
     ("code", """\

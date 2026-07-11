@@ -124,7 +124,7 @@ def load_teacher():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", required=True)
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--kd-alpha", type=float, default=0.6)
     parser.add_argument("--no-teacher", action="store_true",
@@ -132,6 +132,9 @@ def main():
     parser.add_argument("--max-identities", type=int, default=2000,
                         help="Subsample to this many identities so training fits a "
                              "12h Kaggle session (0 = use all)")
+    parser.add_argument("--max-per-identity", type=int, default=40,
+                        help="Cap images per identity (VGGFace2 averages ~360 — "
+                             "uncapped, one epoch takes hours)")
     args = parser.parse_args()
 
     dirs = ensure_dirs()
@@ -142,23 +145,46 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
     ])
-    ds = datasets.ImageFolder(args.data_dir, transform=tfm)
-    if args.max_identities and len(ds.classes) > args.max_identities:
-        import random
+    # Fast dataset build: select identities FIRST, then scan only their
+    # folders (ImageFolder walks all 3.1M files — took 2.6h on Kaggle).
+    # Cap images per identity so an epoch fits the session budget:
+    # 2000 ids x 40 imgs = 80k imgs/epoch (~10 min/epoch on a T4).
+    import os
+    import random
 
-        rng = random.Random(42)
-        kept_classes = set(rng.sample(range(len(ds.classes)), args.max_identities))
-        # Remap kept class indices to a dense 0..N-1 range for ArcFace.
-        remap = {old: new for new, old in enumerate(sorted(kept_classes))}
-        indices = [i for i, (_, c) in enumerate(ds.samples) if c in kept_classes]
-        ds.samples = [(p, remap[c]) for p, c in (ds.samples[i] for i in indices)]
-        ds.targets = [c for _, c in ds.samples]
-        ds.classes = [ds.classes[i] for i in sorted(kept_classes)]
-        ds.imgs = ds.samples
-        print(f"Subsampled to {args.max_identities} identities, {len(ds.samples)} images")
-    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True, num_workers=2, drop_last=True)
-    num_identities = len(ds.classes)
-    print(f"Identities: {num_identities}, images: {len(ds)}")
+    rng = random.Random(42)
+    all_idents = sorted(e.name for e in os.scandir(args.data_dir) if e.is_dir())
+    if args.max_identities and len(all_idents) > args.max_identities:
+        idents = sorted(rng.sample(all_idents, args.max_identities))
+    else:
+        idents = all_idents
+
+    samples: list[tuple[str, int]] = []
+    for cls_idx, ident in enumerate(idents):
+        d = os.path.join(args.data_dir, ident)
+        files = [f.path for f in os.scandir(d)
+                 if f.name.lower().endswith((".jpg", ".jpeg", ".png"))]
+        if len(files) > args.max_per_identity:
+            files = rng.sample(files, args.max_per_identity)
+        samples += [(p, cls_idx) for p in files]
+    print(f"Identities: {len(idents)}, images: {len(samples)} "
+          f"(capped at {args.max_per_identity}/identity)")
+
+    from PIL import Image
+    from torch.utils.data import Dataset
+
+    class FaceDataset(Dataset):
+        def __len__(self):
+            return len(samples)
+
+        def __getitem__(self, i):
+            path, label = samples[i]
+            return tfm(Image.open(path).convert("RGB")), label
+
+    ds = FaceDataset()
+    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True,
+                        num_workers=4, drop_last=True, pin_memory=True)
+    num_identities = len(idents)
 
     student = MobileFaceNet().to(DEVICE)
     arcface = ArcFaceLoss(num_classes=num_identities).to(DEVICE)
@@ -168,14 +194,15 @@ def main():
         list(student.parameters()) + list(arcface.parameters()),
         lr=0.1, momentum=0.9, weight_decay=5e-4,
     )
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20, 35, 45], gamma=0.1)
+    ms = [int(args.epochs * 0.5), int(args.epochs * 0.75)]
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=ms, gamma=0.1)
     mse = nn.MSELoss()
 
     best_path = dirs["checkpoints"] / "face_embedding_best.pth"
     for epoch in range(args.epochs):
         student.train()
         epoch_loss = 0.0
-        for imgs, labels in loader:
+        for step, (imgs, labels) in enumerate(loader):
             imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
             s_emb = student(imgs)
             loss = arcface(s_emb, labels)
@@ -187,15 +214,20 @@ def main():
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
+            if step % 200 == 0:
+                print(f"  epoch {epoch + 1} step {step}/{len(loader)} "
+                      f"loss {loss.item():.4f}", flush=True)
         scheduler.step()
-        print(f"epoch {epoch + 1}/{args.epochs} | loss {epoch_loss / len(loader):.4f}")
-        torch.save(student.state_dict(), best_path)
+        print(f"epoch {epoch + 1}/{args.epochs} | loss {epoch_loss / len(loader):.4f}", flush=True)
+        torch.save(student.state_dict(), best_path)  # checkpoint every epoch
 
     (dirs["evaluation"] / "face_embedding_results.json").write_text(
-        json.dumps({"epochs": args.epochs, "identities": num_identities}, indent=2)
+        json.dumps({"epochs": args.epochs, "identities": num_identities,
+                    "images": len(samples), "teacher_kd": not args.no_teacher},
+                   indent=2)
     )
     print(f"Checkpoint: {best_path}")
-    print("Evaluate on LFW with scripts/evaluate_models.py before publishing.")
+    print("Evaluate on LFW with scripts/evaluate_lfw.py before publishing.")
 
 
 if __name__ == "__main__":
