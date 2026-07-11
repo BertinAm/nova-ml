@@ -66,28 +66,43 @@ def onnx_to_tflite_int8(onnx_path: str, tflite_path: str, calib_dir: str, input_
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     build_calibration_npy(calib_dir, input_size, calib_npy)
 
-    subprocess.run(
-        [
-            "onnx2tf", "-i", onnx_path, "-o", out_dir, "-oiqt",
-            "-cind", "input", calib_npy,
-            "[[[[0.485,0.456,0.406]]]]", "[[[[0.229,0.224,0.225]]]]",
-        ],
-        check=True,
-    )
+    # Attempt full INT8 first. Some architectures can't be strictly
+    # integer-quantized by onnx2tf (e.g. MobileNetV3's hard-sigmoid lowers
+    # to RELU_0_TO_1, unsupported) — in that case fall back to float16,
+    # which still comfortably meets NOVA's size (<10MB) and latency
+    # (<500ms) budgets for MOD-04.
+    int8_ok = True
+    try:
+        subprocess.run(
+            [
+                "onnx2tf", "-i", onnx_path, "-o", out_dir, "-oiqt",
+                "-cind", "input", calib_npy,
+                "[[[[0.485,0.456,0.406]]]]", "[[[[0.229,0.224,0.225]]]]",
+            ],
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        int8_ok = False
+        print("INT8 quantization unsupported for this architecture — "
+              "falling back to float16.")
+        subprocess.run(["onnx2tf", "-i", onnx_path, "-o", out_dir], check=True)
 
-    # onnx2tf writes several variants; prefer full-integer (int8 in/out).
-    candidates = (
-        sorted(Path(out_dir).glob("*_full_integer_quant.tflite"))
-        or sorted(Path(out_dir).glob("*_integer_quant.tflite"))
-    )
-    if not candidates:
-        raise FileNotFoundError(f"No quantized tflite produced in {out_dir}: "
+    preference = (
+        ["*_full_integer_quant.tflite", "*_integer_quant.tflite"] if int8_ok else []
+    ) + ["*_float16.tflite", "*_float32.tflite"]
+    src = None
+    for pattern in preference:
+        matches = sorted(Path(out_dir).glob(pattern))
+        if matches:
+            src = matches[0]
+            break
+    if src is None:
+        raise FileNotFoundError(f"No tflite produced in {out_dir}: "
                                 f"{[p.name for p in Path(out_dir).iterdir()]}")
-    src = candidates[0]
     Path(tflite_path).parent.mkdir(parents=True, exist_ok=True)
     Path(tflite_path).write_bytes(src.read_bytes())
     size_mb = Path(tflite_path).stat().st_size / 1024 / 1024
-    print(f"TFLite INT8: {tflite_path} ({size_mb:.2f} MB, from {src.name})")
+    print(f"TFLite: {tflite_path} ({size_mb:.2f} MB, from {src.name})")
 
 
 def benchmark_tflite(tflite_path: str, n_runs: int = 100):
@@ -98,7 +113,10 @@ def benchmark_tflite(tflite_path: str, n_runs: int = 100):
     interp = tf.lite.Interpreter(model_path=tflite_path)
     interp.allocate_tensors()
     inp = interp.get_input_details()[0]
-    dummy = np.random.randint(-128, 127, inp["shape"], dtype=np.int8)
+    if np.issubdtype(inp["dtype"], np.integer):
+        dummy = np.random.randint(-128, 127, inp["shape"]).astype(inp["dtype"])
+    else:
+        dummy = np.random.rand(*inp["shape"]).astype(inp["dtype"])
     for _ in range(5):
         interp.set_tensor(inp["index"], dummy)
         interp.invoke()
