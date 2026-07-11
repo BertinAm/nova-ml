@@ -311,13 +311,24 @@ print(len(os.listdir(CALIB)), 'calibration images')"""),
     --out /kaggle/working/exports/face_embedding_v1.tflite \\
     --calib-dir {CALIB} --benchmark"""),
     ("code", """\
-# Publish to HuggingFace: unixio/nova-face-embedding.
-# NOTE: LFW verification eval is still TODO (needs pair-list parsing for the
-# attached LFW dataset) — publish records training config only for now.
+# LFW verification (FR-05-05 acceptance metric: accuracy >= 99% target).
+# Non-fatal: if the LFW mirror's CSV layout differs, publish proceeds and
+# the eval can be added in a later 5-min checkpoint-reuse run.
+LFW_ROOT = next((p for p in inputs if 'lfw' in p.split('/')[-1].lower()), None)
+print('LFW_ROOT =', LFW_ROOT)
+if LFW_ROOT:
+    !python scripts/evaluate_lfw.py \\
+        --checkpoint /kaggle/working/checkpoints/face_embedding_best.pth \\
+        --lfw-root {LFW_ROOT} \\
+        --out /kaggle/working/evaluation/lfw_results.json || echo 'LFW eval failed — continuing'
+else:
+    print('LFW dataset not attached — skipping eval')"""),
+    ("code", """\
+# Publish to HuggingFace: unixio/nova-face-embedding
 !python scripts/push_to_huggingface.py --module MOD-05-embed \\
     --pytorch /kaggle/working/checkpoints/face_embedding_best.pth \\
     --tflite /kaggle/working/exports/face_embedding_v1.tflite \\
-    --version 1.0.0"""),
+    --eval-json /kaggle/working/evaluation/lfw_results.json --version 1.0.0"""),
 ])
 
 # ── 01b: obstacle COCO baseline (no training — quantize & publish) ────
