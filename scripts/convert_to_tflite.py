@@ -87,9 +87,13 @@ def onnx_to_tflite_int8(onnx_path: str, tflite_path: str, calib_dir: str, input_
               "falling back to float16.")
         subprocess.run(["onnx2tf", "-i", onnx_path, "-o", out_dir], check=True)
 
+    # Preference: INT8 > float32 > float16. onnx2tf's float16 files carry
+    # true fp16 tensors that standard TFLite CPU kernels refuse to load
+    # (CONV_2D "failed to prepare" — observed on Kaggle and likely on
+    # Android too), so float32 is the safe portable fallback.
     preference = (
         ["*_full_integer_quant.tflite", "*_integer_quant.tflite"] if int8_ok else []
-    ) + ["*_float16.tflite", "*_float32.tflite"]
+    ) + ["*_float32.tflite", "*_float16.tflite"]
     src = None
     for pattern in preference:
         matches = sorted(Path(out_dir).glob(pattern))
@@ -157,7 +161,11 @@ def main():
     onnx_to_tflite_int8(onnx_path, args.out, args.calib_dir, args.input_size)
 
     if args.benchmark:
-        benchmark_tflite(args.out)
+        try:
+            benchmark_tflite(args.out)
+        except Exception as exc:
+            print(f"WARNING: benchmark failed ({exc}) — file written anyway; "
+                  "verify runtime compatibility on target device.")
 
 
 if __name__ == "__main__":

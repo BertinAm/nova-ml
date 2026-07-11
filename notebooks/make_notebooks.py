@@ -184,10 +184,30 @@ if not os.path.isdir(f'{CFA_DATA}/train'):
 print('CFA_DATA =', CFA_DATA)
 !ls {CFA_DATA}/train"""),
     ("code", """\
+# Reuse the already-trained checkpoint from HF if one exists (saves ~26 min
+# when only the conversion/publish steps changed). Delete the pytorch/ file
+# on the HF repo to force retraining.
+import os, shutil
+from huggingface_hub import hf_hub_download
+os.makedirs('/kaggle/working/checkpoints', exist_ok=True)
+try:
+    p = hf_hub_download('unixio/nova-currency-detection',
+                        'pytorch/currency_student_best.pth',
+                        token=os.environ['HF_TOKEN'])
+    shutil.copy(p, '/kaggle/working/checkpoints/currency_student_best.pth')
+    SKIP_TRAINING = True
+    print('Reusing trained checkpoint from HF — skipping training.')
+except Exception as e:
+    SKIP_TRAINING = False
+    print('No checkpoint on HF — will train.', e)"""),
+    ("code", """\
 # Two-phase: fine-tune EfficientNet-B4 teacher, distill into MobileNetV3-Small.
 # Class count is auto-detected from the train/ folders (10).
-!python scripts/train_currency_distillation.py --data-dir {CFA_DATA} \\
-    --teacher-epochs 20 --student-epochs 60 --batch-size 64"""),
+if not SKIP_TRAINING:
+    !python scripts/train_currency_distillation.py --data-dir {CFA_DATA} \\
+        --teacher-epochs 20 --student-epochs 60 --batch-size 64
+else:
+    print('Skipped — using HF checkpoint.')"""),
     ("code", """\
 # Held-out test evaluation at the 0.85 confidence gate (FR-04-03)
 !python scripts/evaluate_models.py currency \\
