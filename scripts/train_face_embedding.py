@@ -15,6 +15,7 @@ VGGFace2 subset. Evaluation: LFW pairs.
 """
 import argparse
 import json
+import math
 from pathlib import Path
 
 import torch
@@ -86,18 +87,41 @@ class MobileFaceNet(nn.Module):
 
 # ── Losses ────────────────────────────────────────────────────────────
 class ArcFaceLoss(nn.Module):
+    """ArcFace additive angular margin loss WITH the standard "easy margin"
+    safeguard.
+
+    Without it, cos(theta + margin) is only monotonically decreasing while
+    theta + margin <= pi. Once theta + margin exceeds pi (routine early in
+    training — random Xavier-initialized class weights across thousands of
+    classes put most samples far from their target direction at step 0),
+    cosine turns non-monotonic and the loss starts REWARDING misalignment
+    for the hardest samples. That is a structural property of the naive
+    formula, independent of random seed or any distillation teacher —
+    training collapses onto the same degenerate fixed point regardless.
+    The fix (used in every reference ArcFace implementation): fall back to
+    a linear, monotonic approximation for samples past the threshold.
+    """
+
     def __init__(self, num_classes, embedding_dim=EMBEDDING_DIM, scale=64.0, margin=0.5):
         super().__init__()
         self.scale, self.margin = scale, margin
         self.weight = nn.Parameter(torch.empty(num_classes, embedding_dim))
         nn.init.xavier_uniform_(self.weight)
+        # Precompute the easy-margin constants.
+        self.cos_m = math.cos(margin)
+        self.sin_m = math.sin(margin)
+        self.threshold = math.cos(math.pi - margin)
+        self.mm = math.sin(math.pi - margin) * margin
 
     def forward(self, embeddings, labels):
         emb = F.normalize(embeddings, p=2, dim=1)
         w = F.normalize(self.weight, p=2, dim=1)
-        cosine = F.linear(emb, w)
-        theta = torch.acos(cosine.clamp(-1 + 1e-6, 1 - 1e-6))
-        target = torch.cos(theta + self.margin)
+        cosine = F.linear(emb, w).clamp(-1 + 1e-7, 1 - 1e-7)
+        sine = torch.sqrt((1.0 - cosine * cosine).clamp(min=1e-7))
+        target = cosine * self.cos_m - sine * self.sin_m  # cos(theta + margin), stable form
+        # Easy margin: where theta+margin would exceed pi, use a linear
+        # monotonic fallback instead of the (now decreasing) cosine.
+        target = torch.where(cosine > self.threshold, target, cosine - self.mm)
         one_hot = torch.zeros_like(cosine).scatter_(1, labels.view(-1, 1), 1.0)
         logits = cosine * (1 - one_hot) + target * one_hot
         return F.cross_entropy(logits * self.scale, labels)
@@ -190,19 +214,33 @@ def main():
     arcface = ArcFaceLoss(num_classes=num_identities).to(DEVICE)
     teacher_embed = None if args.no_teacher else load_teacher()
 
+    base_lr = 0.1
     optimizer = torch.optim.SGD(
         list(student.parameters()) + list(arcface.parameters()),
-        lr=0.1, momentum=0.9, weight_decay=5e-4,
+        lr=base_lr, momentum=0.9, weight_decay=5e-4,
     )
     ms = [int(args.epochs * 0.5), int(args.epochs * 0.75)]
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=ms, gamma=0.1)
     mse = nn.MSELoss()
+
+    # Linear LR warmup over the first epoch: training an angular-margin
+    # loss from a random init at full LR risks exactly the kind of early
+    # instability that caused the collapse this script now guards against
+    # structurally (see ArcFaceLoss) — warmup is a second, cheap safety net.
+    warmup_steps = len(loader)
+    global_step = 0
 
     best_path = dirs["checkpoints"] / "face_embedding_best.pth"
     for epoch in range(args.epochs):
         student.train()
         epoch_loss = 0.0
         for step, (imgs, labels) in enumerate(loader):
+            if global_step < warmup_steps:
+                warmup_lr = base_lr * (global_step + 1) / warmup_steps
+                for g in optimizer.param_groups:
+                    g["lr"] = warmup_lr
+            global_step += 1
+
             imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
             s_emb = student(imgs)
             loss = arcface(s_emb, labels)
@@ -212,12 +250,16 @@ def main():
                 loss = args.kd_alpha * kd + (1 - args.kd_alpha) * loss
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                list(student.parameters()) + list(arcface.parameters()), max_norm=5.0
+            )
             optimizer.step()
             epoch_loss += loss.item()
             if step % 200 == 0:
                 print(f"  epoch {epoch + 1} step {step}/{len(loader)} "
                       f"loss {loss.item():.4f}", flush=True)
-        scheduler.step()
+        if global_step >= warmup_steps:
+            scheduler.step()
         print(f"epoch {epoch + 1}/{args.epochs} | loss {epoch_loss / len(loader):.4f}", flush=True)
         torch.save(student.state_dict(), best_path)  # checkpoint every epoch
 

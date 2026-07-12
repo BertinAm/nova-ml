@@ -270,13 +270,13 @@ print('VGG_DATA =', VGG_DATA, '| identities (sample count):',
 SKIP_TRAINING = False
 print('Forcing full retrain — HF checkpoint is the known-collapsed v1.0.0 model.')"""),
     ("code", """\
-# MobileFaceNet + ArcFace loss + embedding-KD from InsightFace teacher.
-# --max-identities 2000 keeps one run inside Kaggle's 12h session limit.
-# If insightface teacher fails to load, rerun with --no-teacher.
+# MobileFaceNet + ArcFace loss. --max-identities 2000 keeps one run inside
+# Kaggle's 12h session limit. --no-teacher: InsightFace teacher only runs
+# on CPU here (onnxruntime shadows the GPU build), ~10x slower, AND two
+# earlier runs proved the teacher wasn't even the cause of the training
+# collapse we hit (see ArcFaceLoss docstring — it was a missing easy-margin
+# safeguard, now fixed) — so there is no upside to paying for it.
 if not SKIP_TRAINING:
-    # --no-teacher: InsightFace teacher only runs on CPU here (onnxruntime
-    #   shadows the GPU build), making KD ~10x slower. ArcFace loss alone
-    #   trains a solid MobileFaceNet. --max-per-identity bounds epoch length.
     !python scripts/train_face_embedding.py --data-dir {VGG_DATA} \\
         --epochs 30 --batch-size 256 --max-identities 2000 \\
         --max-per-identity 40 --no-teacher
@@ -285,7 +285,7 @@ else:
     ("code", """\
 # Build a SMALL calibration dir (200 images). Never point the converter at
 # the full dataset — rglob over 3M files takes forever.
-import random
+import os, random, shutil
 CALIB = '/kaggle/working/calib'
 shutil.rmtree(CALIB, ignore_errors=True)
 os.makedirs(CALIB)
