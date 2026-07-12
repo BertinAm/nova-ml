@@ -227,6 +227,14 @@ else:
     --tflite /kaggle/working/exports/currency_detection_v1.tflite \\
     --labels labels/cfa_labels.txt \\
     --eval-json /kaggle/working/evaluation/currency_test_results.json --version 1.0.0"""),
+    ("md", "### Confusion matrix (for the report)\n"
+           "Evaluates the just-published checkpoint on the held-out test split "
+           "and saves a real per-class confusion matrix — no retraining, ~1 min."),
+    ("code", """\
+!pip install -q scikit-learn matplotlib
+!python scripts/evaluate_currency_confusion.py --data-dir {CFA_DATA}
+from IPython.display import Image, display
+display(Image('/kaggle/working/evaluation/currency_confusion_matrix.png'))"""),
 ])
 
 # ── 03: face embedding ────────────────────────────────────────────────
