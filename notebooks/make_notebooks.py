@@ -231,12 +231,34 @@ else:
            "Evaluates the just-published checkpoint on the held-out test split "
            "and saves a real per-class confusion matrix — no retraining, ~1 min."),
     ("code", """\
-# Self-contained: re-asserts cwd + pulls latest scripts regardless of
-# whether earlier cells ran in this kernel session (a common cause of
-# 'file not found' if this cell is re-run alone after a session reset).
+# Fully self-contained: clones the repo and sets the HF token itself if
+# this cell is run standalone (session reset, or skipped straight to
+# here) — does not assume any earlier cell in this notebook has run.
 import os, subprocess
-subprocess.run(['git', '-C', '/kaggle/working/nova-ml', 'pull'], check=True)
+REPO = 'https://github.com/BertinAm/nova-ml.git'
+if not os.path.exists('/kaggle/working/nova-ml'):
+    subprocess.run(['git', 'clone', REPO, '/kaggle/working/nova-ml'], check=True)
+else:
+    subprocess.run(['git', '-C', '/kaggle/working/nova-ml', 'pull'], check=True)
 os.chdir('/kaggle/working/nova-ml')
+if 'HF_TOKEN' not in os.environ:
+    from kaggle_secrets import UserSecretsClient
+    os.environ['HF_TOKEN'] = UserSecretsClient().get_secret('HF_TOKEN')
+os.environ.setdefault('NOVA_HF_USERNAME', 'unixio')
+
+# Re-resolve the CFA dataset mount too, in case CFA_DATA isn't already
+# defined in this kernel (same 3-level search as the earlier cell).
+if 'CFA_DATA' not in dir():
+    import glob
+    inputs = (glob.glob('/kaggle/input/*') + glob.glob('/kaggle/input/*/*')
+              + glob.glob('/kaggle/input/*/*/*'))
+    CFA_DATA = next(p for p in inputs
+                    if 'cfa' in p.split('/')[-1].lower() and os.path.isdir(p))
+    if not os.path.isdir(f'{CFA_DATA}/train'):
+        CFA_DATA = next(p for p in glob.glob(f'{CFA_DATA}/*')
+                        if os.path.isdir(f'{p}/train'))
+    print('CFA_DATA =', CFA_DATA)
+
 !pip install -q scikit-learn matplotlib
 !python scripts/evaluate_currency_confusion.py --data-dir {CFA_DATA}
 from IPython.display import Image, display
