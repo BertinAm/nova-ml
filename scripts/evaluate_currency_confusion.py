@@ -9,12 +9,13 @@ where the dataset is mounted:
     python scripts/evaluate_currency_confusion.py --data-dir /kaggle/input/<cfa-dataset-slug>
 """
 import argparse
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 import timm
 import torch
-from huggingface_hub import hf_hub_download
+from huggingface_hub import HfApi, hf_hub_download
 from nova_common import HF_REPOS, ensure_dirs
 from sklearn.metrics import classification_report, confusion_matrix
 from torch.utils.data import DataLoader
@@ -76,8 +77,28 @@ def main():
 
     out_path = dirs["evaluation"] / "currency_confusion_matrix.png"
     fig.savefig(out_path, dpi=150)
-    (dirs["evaluation"] / "currency_classification_report.txt").write_text(report)
+    report_path = dirs["evaluation"] / "currency_classification_report.txt"
+    report_path.write_text(report)
     print(f"Saved: {out_path}")
+
+    # Upload straight to the model's HF repo so the figure is downloadable
+    # from the same place as the checkpoint/tflite, without a separate step.
+    token = os.environ.get("HF_TOKEN")
+    if token:
+        api = HfApi(token=token)
+        for local_path, repo_path in [
+            (out_path, "evaluation/currency_confusion_matrix.png"),
+            (report_path, "evaluation/currency_classification_report.txt"),
+        ]:
+            api.upload_file(
+                path_or_fileobj=str(local_path),
+                path_in_repo=repo_path,
+                repo_id=HF_REPOS["MOD-04"],
+                commit_message="Add confusion matrix + classification report",
+            )
+        print(f"Uploaded to https://huggingface.co/{HF_REPOS['MOD-04']}/tree/main/evaluation")
+    else:
+        print("HF_TOKEN not set — skipped upload, figure is only local.")
 
 
 if __name__ == "__main__":

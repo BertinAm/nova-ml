@@ -231,6 +231,12 @@ else:
            "Evaluates the just-published checkpoint on the held-out test split "
            "and saves a real per-class confusion matrix — no retraining, ~1 min."),
     ("code", """\
+# Self-contained: re-asserts cwd + pulls latest scripts regardless of
+# whether earlier cells ran in this kernel session (a common cause of
+# 'file not found' if this cell is re-run alone after a session reset).
+import os, subprocess
+subprocess.run(['git', '-C', '/kaggle/working/nova-ml', 'pull'], check=True)
+os.chdir('/kaggle/working/nova-ml')
 !pip install -q scikit-learn matplotlib
 !python scripts/evaluate_currency_confusion.py --data-dir {CFA_DATA}
 from IPython.display import Image, display
